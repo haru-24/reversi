@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
-import { Copy, Wifi, WifiOff } from 'lucide-react';
-import QRCode from 'react-qr-code';
+import { Copy, Users, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { database, isFirebaseConfigured } from './firebase';
+import { ref, set, update, onValue, off, get } from 'firebase/database';
 
 const BOARD_SIZE = 8;
 const EMPTY = 0;
@@ -11,36 +12,38 @@ const WHITE = 2;
 type CellValue = typeof EMPTY | typeof BLACK | typeof WHITE;
 type Board = CellValue[][];
 type Position = [number, number];
-type GamePhase = 'setup' | 'waiting' | 'responding' | 'playing' | 'finished';
+type GamePhase = 'setup' | 'waiting' | 'playing' | 'finished';
 type GameResult = 'black' | 'white' | 'draw' | null;
 type PlayerColor = typeof BLACK | typeof WHITE;
 
-// ゲーム状態をエンコード/デコードする関数
-const encodeGameState = (board: Board, currentPlayer: PlayerColor, gamePhase: GamePhase): string => {
-  const gameState = {
-    board: board,
-    currentPlayer: currentPlayer,
-    gamePhase: gamePhase,
-    timestamp: Date.now()
+interface GameState {
+  board: Board;
+  currentPlayer: PlayerColor;
+  gamePhase: GamePhase;
+  gameResult: GameResult;
+  players: {
+    black?: string;
+    white?: string;
   };
-  const jsonString = JSON.stringify(gameState);
-  return btoa(unescape(encodeURIComponent(jsonString))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-};
+  createdAt: number;
+  lastMove?: {
+    row: number;
+    col: number;
+    player: PlayerColor;
+    timestamp: number;
+  };
+}
 
-const decodeGameState = (encoded: string): { board: Board; currentPlayer: PlayerColor; gamePhase: GamePhase; timestamp: number } => {
-  try {
-    const padding = '='.repeat((4 - encoded.length % 4) % 4);
-    const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/') + padding;
-    const jsonString = decodeURIComponent(escape(atob(base64)));
-    return JSON.parse(jsonString);
-  } catch {
-    throw new Error('無効なゲーム状態です');
-  }
-};
 
-// ランダムな接続IDを生成
-const generateConnectionId = (): string => {
+
+// ランダムなゲームIDを生成
+const generateGameId = (): string => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
+};
+
+// ランダムなプレイヤーIDを生成
+const generatePlayerId = (): string => {
+  return Math.random().toString(36).substring(2, 12);
 };
 
 // 初期盤面を作成
@@ -53,6 +56,18 @@ const createInitialBoard = (): Board => {
   return board;
 };
 
+// 初期ゲーム状態を作成
+const createInitialGameState = (hostPlayerId: string): GameState => ({
+  board: createInitialBoard(),
+  currentPlayer: BLACK,
+  gamePhase: 'waiting',
+  gameResult: null,
+  players: {
+    black: hostPlayerId
+  },
+  createdAt: Date.now()
+});
+
 // 方向ベクトル（8方向）
 const DIRECTIONS: Position[] = [
   [-1, -1], [-1, 0], [-1, 1],
@@ -60,20 +75,23 @@ const DIRECTIONS: Position[] = [
   [1, -1],  [1, 0],  [1, 1]
 ];
 
-const P2PReversi: React.FC = () => {
+
+
+const FirebaseReversi: React.FC = () => {
   const [board, setBoard] = useState<Board>(createInitialBoard());
   const [currentPlayer, setCurrentPlayer] = useState<PlayerColor>(BLACK);
   const [myColor, setMyColor] = useState<PlayerColor | null>(null);
+  const [myPlayerId] = useState<string>(generatePlayerId());
   const [gamePhase, setGamePhase] = useState<GamePhase>('setup');
-  const [isConnected, setIsConnected] = useState<boolean>(false);
   const [gameResult, setGameResult] = useState<GameResult>(null);
-  const [connectionId, setConnectionId] = useState<string>('');
-  const [inviteCode, setInviteCode] = useState<string>('');
-  const [joinCode, setJoinCode] = useState<string>('');
-  const [responseCode, setResponseCode] = useState<string>('');
-  const [gameSyncCode, setGameSyncCode] = useState<string>('');
-  const [opponentSyncCode, setOpponentSyncCode] = useState<string>('');
-  const [showSyncDialog, setShowSyncDialog] = useState<boolean>(false);
+  const [gameId, setGameId] = useState<string>('');
+  const [joinGameId, setJoinGameId] = useState<string>('');
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [opponentConnected, setOpponentConnected] = useState<boolean>(false);
+  const [gameStateRef, setGameStateRef] = useState<any>(null);
+
+  // Firebase設定チェック
+  // const isFirebaseConfigured = FIREBASE_CONFIG.apiKey !== "your-api-key-here";
 
   // 有効な手を取得
   const getValidMoves = useCallback((board: Board, player: PlayerColor): Position[] => {
@@ -115,8 +133,10 @@ const P2PReversi: React.FC = () => {
     return toFlip;
   };
 
-  // 手を打つ
-  const makeMove = useCallback((row: number, col: number, player: PlayerColor): boolean => {
+  // 手を打つ（Firebase経由）
+  const makeMove = async (row: number, col: number, player: PlayerColor): Promise<boolean> => {
+    if (!gameStateRef || gamePhase !== 'playing' || currentPlayer !== myColor) return false;
+
     const toFlip = canFlip(board, row, col, player);
     if (toFlip.length === 0) return false;
 
@@ -126,194 +146,157 @@ const P2PReversi: React.FC = () => {
       newBoard[r][c] = player;
     });
 
-    setBoard(newBoard);
-    
-    // 次のプレイヤーに交代
+    // 次のプレイヤーを決定
     const nextPlayer: PlayerColor = player === BLACK ? WHITE : BLACK;
     const nextValidMoves = getValidMoves(newBoard, nextPlayer);
     
+    let newGamePhase: GamePhase = 'playing';
+    let newGameResult: GameResult = null;
+
     if (nextValidMoves.length === 0) {
       const currentValidMoves = getValidMoves(newBoard, player);
       if (currentValidMoves.length === 0) {
         // ゲーム終了
         const blackCount = newBoard.flat().filter(cell => cell === BLACK).length;
         const whiteCount = newBoard.flat().filter(cell => cell === WHITE).length;
-        let result: GameResult;
-        if (blackCount > whiteCount) result = 'black';
-        else if (whiteCount > blackCount) result = 'white';
-        else result = 'draw';
-        
-        setGameResult(result);
-        setGamePhase('finished');
+        if (blackCount > whiteCount) newGameResult = 'black';
+        else if (whiteCount > blackCount) newGameResult = 'white';
+        else newGameResult = 'draw';
+        newGamePhase = 'finished';
       }
-      // パスは発生しない（currentPlayerは変更しない）
-    } else {
-      setCurrentPlayer(nextPlayer);
     }
 
-    return true;
-  }, [board, getValidMoves]);
-
-  // ゲームホストとして開始
-  const startAsHost = async (): Promise<void> => {
-    const id = generateConnectionId();
-    setConnectionId(id);
-    setMyColor(BLACK);
-    setGamePhase('waiting');
-    setIsConnected(true);
-    
-    // 初期状態をエンコード
-    const gameState = encodeGameState(board, currentPlayer, 'waiting');
-    const code = `${id}-${gameState}`;
-    setInviteCode(code);
+    // Firebaseを更新
+    try {
+      await update(gameStateRef, {
+        board: newBoard,
+        currentPlayer: nextValidMoves.length > 0 ? nextPlayer : player,
+        gamePhase: newGamePhase,
+        gameResult: newGameResult,
+        lastMove: {
+          row,
+          col,
+          player,
+          timestamp: Date.now()
+        }
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to update game state:', error);
+      return false;
+    }
   };
 
-  // ゲストとして参加
-  const joinAsGuest = useCallback(async (): Promise<void> => {
-    if (!joinCode) return;
-
-    const parts = joinCode.split('-');
-    if (parts.length < 2) {
-      alert('無効な招待コードです。正しい形式: ID-XXXXXX');
+  // ゲームを作成
+  const createGame = async (): Promise<void> => {
+    if (!isFirebaseConfigured) {
+      alert('Firebase設定が必要です。設定を確認してください。');
       return;
     }
 
-    const [id, ...encodedParts] = parts;
-    const encodedGameState = encodedParts.join('-');
+    const newGameId = generateGameId();
+    const initialState = createInitialGameState(myPlayerId);
+    const gameRef = ref(database, `games/${newGameId}`);
 
     try {
-      const gameState = decodeGameState(encodedGameState);
-      
-      // ゲーム状態を復元
-      setBoard(gameState.board);
-      setCurrentPlayer(gameState.currentPlayer);
-      setMyColor(WHITE);
+      await set(gameRef, initialState);
+      setGameId(newGameId);
+      setMyColor(BLACK);
+      setGameStateRef(gameRef);
+      setGamePhase('waiting');
       setIsConnected(true);
-      
-      // 応答コードを生成
-      const responseState = encodeGameState(gameState.board, gameState.currentPlayer, 'responding');
-      const responseCode = `${id}-${responseState}`;
-      setResponseCode(responseCode);
-      
-      console.log('Guest joined successfully, waiting for host to receive response...');
-      
-      // 応答コード確認画面に遷移
-      setGamePhase('responding');
+
+      // ゲーム状態の監視を開始
+      onValue(gameRef, handleGameStateUpdate);
     } catch (error) {
-      console.error('Error joining game:', error);
-      alert('招待コードの処理中にエラーが発生しました。コードを確認してください。');
-    }
-  }, [joinCode]);
-
-  // ホストが回答を受信
-  const receiveAnswer = async (): Promise<void> => {
-    if (!responseCode || !connectionId) {
-      alert('応答コードまたは接続IDが利用できません。');
-      return;
-    }
-
-    const parts = responseCode.split('-');
-    if (parts.length < 2) {
-      alert('無効な応答コードです。正しい形式: ID-XXXXXX');
-      return;
-    }
-
-    const [id, ...encodedParts] = parts;
-    const encodedResponseState = encodedParts.join('-');
-
-    if (id !== connectionId) {
-      alert('接続IDが一致しません。正しい応答コードを入力してください。');
-      return;
-    }
-
-    try {
-      const responseState = decodeGameState(encodedResponseState);
-      
-      // ゲーム状態を更新
-      setBoard(responseState.board);
-      setCurrentPlayer(responseState.currentPlayer);
-      setGamePhase('playing');
-      
-      console.log('Host received response, starting game...');
-      alert('接続が完了しました！ゲームを開始します。ゲスト側にもゲーム開始を伝えてください。');
-    } catch (error) {
-      console.error('Error processing response:', error);
-      alert('応答コードの処理中にエラーが発生しました。');
+      console.error('Failed to create game:', error);
+      alert('ゲーム作成に失敗しました。');
     }
   };
+
+  // ゲームに参加
+  const joinGame = async (): Promise<void> => {
+    if (!isFirebaseConfigured) {
+      alert('Firebase設定が必要です。設定を確認してください。');
+      return;
+    }
+
+    if (!joinGameId) return;
+
+    const gameRef = ref(database, `games/${joinGameId}`);
+
+    try {
+      const snapshot = await get(gameRef);
+      const gameState = snapshot.val();
+
+      if (!snapshot.exists()) {
+        alert('ゲームが見つかりません。ゲームIDを確認してください。');
+        return;
+      }
+
+      if (gameState.players.white) {
+        alert('このゲームは既に満員です。');
+        return;
+      }
+
+      // 白プレイヤーとして参加
+      await update(gameRef, {
+        'players/white': myPlayerId,
+        gamePhase: 'playing'
+      });
+
+      setGameId(joinGameId);
+      setMyColor(WHITE);
+      setGameStateRef(gameRef);
+      setIsConnected(true);
+
+      // ゲーム状態の監視を開始
+      onValue(gameRef, handleGameStateUpdate);
+    } catch (error) {
+      console.error('Failed to join game:', error);
+      alert('ゲーム参加に失敗しました。');
+    }
+  };
+
+  // ゲーム状態の更新を処理
+  const handleGameStateUpdate = useCallback((snapshot: any) => {
+    const gameState: GameState | null = snapshot.val();
+    
+    if (!gameState) return;
+
+    setBoard(gameState.board);
+    setCurrentPlayer(gameState.currentPlayer);
+    setGamePhase(gameState.gamePhase);
+    setGameResult(gameState.gameResult);
+    
+    // 相手の接続状態を確認
+    const isOpponentConnected = myColor === BLACK ? 
+      !!gameState.players.white : !!gameState.players.black;
+    setOpponentConnected(isOpponentConnected);
+  }, [myColor]);
 
   // セルクリック処理
   const handleCellClick = (row: number, col: number): void => {
     if (gamePhase !== 'playing' || currentPlayer !== myColor || board[row][col] !== EMPTY) return;
-    
-    const toFlip = canFlip(board, row, col, myColor);
-    if (toFlip.length === 0) return;
-
-    if (makeMove(row, col, myColor)) {
-      // 手を打った後、新しいゲーム状態をエンコードして相手に送信
-      setTimeout(() => {
-        const newGameState = encodeGameState(board, currentPlayer, 'playing');
-        const syncCode = `${connectionId}-${newGameState}`;
-        setGameSyncCode(syncCode);
-        setShowSyncDialog(true);
-      }, 100); // stateの更新を待つ
-    }
-  };
-
-  // 相手からの同期コードを受信
-  const receiveSyncCode = async (): Promise<void> => {
-    if (!opponentSyncCode) {
-      alert('同期コードが入力されていません。');
-      return;
-    }
-
-    const parts = opponentSyncCode.split('-');
-    if (parts.length < 2) {
-      alert('無効な同期コードです。正しい形式: ID-XXXXXX');
-      return;
-    }
-
-    const [id, ...encodedParts] = parts;
-    const encodedGameState = encodedParts.join('-');
-
-    if (id !== connectionId) {
-      alert('接続IDが一致しません。正しい同期コードを入力してください。');
-      return;
-    }
-
-    try {
-      const gameState = decodeGameState(encodedGameState);
-      
-      // ゲーム状態を更新
-      setBoard(gameState.board);
-      setCurrentPlayer(gameState.currentPlayer);
-      
-      // 同期コードをクリア
-      setOpponentSyncCode('');
-      
-      console.log('Game state synchronized successfully');
-      alert('ゲーム状態が同期されました！');
-    } catch (error) {
-      console.error('Error synchronizing game state:', error);
-      alert('同期コードの処理中にエラーが発生しました。');
-    }
+    makeMove(row, col, myColor!);
   };
 
   // 新しいゲームを開始
   const resetGame = (): void => {
+    if (gameStateRef) {
+      off(gameStateRef, 'value', handleGameStateUpdate);
+    }
+    
     setBoard(createInitialBoard());
     setCurrentPlayer(BLACK);
     setMyColor(null);
     setGamePhase('setup');
     setGameResult(null);
-    setConnectionId('');
-    setInviteCode('');
-    setJoinCode('');
-    setResponseCode('');
-    setGameSyncCode('');
-    setOpponentSyncCode('');
-    setShowSyncDialog(false);
+    setGameId('');
+    setJoinGameId('');
+    setGameStateRef(null);
     setIsConnected(false);
+    setOpponentConnected(false);
   };
 
   // 石の数を数える
@@ -353,47 +336,66 @@ const P2PReversi: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-900 p-4">
       <div className="max-w-4xl mx-auto">
         <div className="text-center mb-6">
-          <h1 className="text-4xl font-bold text-white mb-2">リバーシ（QRコード方式）</h1>
-          <div className="flex items-center justify-center gap-2 text-green-200">
-            {isConnected ? (
-              <>
-                <Wifi className="w-5 h-5" />
-                <span>接続済み</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-5 h-5" />
-                <span>未接続</span>
-              </>
+          <h1 className="text-4xl font-bold text-white mb-2">リバーシ</h1>
+          <div className="flex items-center justify-center gap-4 text-blue-200">
+            <div className="flex items-center gap-2">
+              {isConnected ? (
+                <>
+                  <Wifi className="w-5 h-5" />
+                  <span>Firebase接続済み</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-5 h-5" />
+                  <span>未接続</span>
+                </>
+              )}
+            </div>
+            {gamePhase === 'playing' && (
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5" />
+                <span>{opponentConnected ? '対戦相手: オンライン' : '対戦相手: 待機中'}</span>
+              </div>
             )}
           </div>
         </div>
+
+        {!isFirebaseConfigured && (
+          <div className="bg-red-600/20 border border-red-500 rounded-xl p-4 mb-6">
+            <h3 className="text-red-200 font-bold mb-2">Firebase設定が必要です</h3>
+            <p className="text-red-200 text-sm">
+              FIREBASE_CONFIGオブジェクトに実際のFirebase設定値を入力してください。
+              <br />Firebase Console → プロジェクト設定 → SDK設定と構成 から取得できます。
+            </p>
+          </div>
+        )}
 
         {gamePhase === 'setup' && (
           <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
             <h2 className="text-2xl font-bold text-white mb-4 text-center">ゲーム開始</h2>
             <div className="flex flex-col gap-4">
               <button
-                onClick={startAsHost}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-medium"
+                onClick={createGame}
+                disabled={!isFirebaseConfigured}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 text-white px-6 py-3 rounded-lg transition-colors font-medium"
               >
-                ゲームを作成する（黒石・先手）
+                新しいゲームを作成（黒石・先手）
               </button>
               <div className="border-t border-white/20 pt-4">
                 <div className="mb-4">
-                  <label className="block text-white mb-2">招待コードを入力：</label>
+                  <label className="block text-white mb-2">ゲームIDを入力して参加：</label>
                   <input
                     type="text"
-                    value={joinCode}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setJoinCode(e.target.value)}
+                    value={joinGameId}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setJoinGameId(e.target.value.toUpperCase())}
                     className="w-full p-3 rounded-lg bg-black/20 text-white placeholder-gray-300 border border-gray-600"
-                    placeholder="例: ABC123-eyJ0eXBlIjoib2ZmZXIi..."
+                    placeholder="例: ABC123"
+                    maxLength={6}
                   />
-                  <p className="text-sm text-gray-300 mt-2">形式: 接続ID-ゲーム状態データ</p>
                 </div>
                 <button
-                  onClick={joinAsGuest}
-                  disabled={!joinCode}
+                  onClick={joinGame}
+                  disabled={!joinGameId || !isFirebaseConfigured}
                   className="bg-green-600 hover:bg-green-700 disabled:bg-gray-500 text-white px-6 py-3 rounded-lg transition-colors font-medium"
                 >
                   ゲームに参加する（白石・後手）
@@ -406,92 +408,25 @@ const P2PReversi: React.FC = () => {
         {gamePhase === 'waiting' && (
           <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
             <h2 className="text-2xl font-bold text-white mb-4 text-center">プレイヤーを待機中...</h2>
-            <div className="mb-4">
-              <label className="block text-white mb-2">招待コード（相手に送信してください）：</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={inviteCode}
-                  readOnly
-                  className="w-full p-3 rounded-lg bg-black/20 text-white border border-gray-600 pr-12"
-                />
-                <button
-                  onClick={() => copyToClipboard(inviteCode)}
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-lg"
-                >
-                  <Copy className="w-4 h-4" />
-                </button>
-              </div>
-              <p className="text-sm text-gray-300 mt-2">接続ID: {connectionId}</p>
-            </div>
-            
-            {/* QRコードを表示 */}
-            <div className="flex justify-center mt-4">
-              <div className="bg-white p-4 rounded-lg">
-                <QRCode value={inviteCode} size={200} />
-              </div>
-            </div>
-            
-            <div className="border-t border-white/20 pt-4">
+            <div className="text-center">
               <div className="mb-4">
-                <label className="block text-white mb-2">応答コードを入力：</label>
-                <input
-                  type="text"
-                  value={responseCode}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setResponseCode(e.target.value)}
-                  className="w-full p-3 rounded-lg bg-black/20 text-white placeholder-gray-300 border border-gray-600"
-                  placeholder={`${connectionId}-応答データ`}
-                />
+                <label className="block text-white mb-2">ゲームID（相手に共有してください）：</label>
+                <div className="flex items-center justify-center gap-2">
+                  <div className="bg-black/20 px-6 py-3 rounded-lg border border-gray-600">
+                    <span className="text-white text-2xl font-mono font-bold">{gameId}</span>
+                  </div>
+                  <button
+                    onClick={() => copyToClipboard(gameId)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg"
+                  >
+                    <Copy className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={receiveAnswer}
-                disabled={!responseCode}
-                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-500 text-white px-6 py-3 rounded-lg transition-colors font-medium"
-              >
-                接続を完了する
-              </button>
-            </div>
-          </div>
-        )}
-
-        {gamePhase === 'responding' && (
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
-            <h2 className="text-2xl font-bold text-white mb-4 text-center">応答コードを送信</h2>
-            <div className="mb-4">
-              <label className="block text-white mb-2">この応答コードをホストに送信してください：</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={responseCode}
-                  readOnly
-                  className="w-full p-3 rounded-lg bg-black/20 text-white border border-gray-600 pr-12"
-                />
-                <button
-                  onClick={() => copyToClipboard(responseCode)}
-                  className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-lg"
-                >
-                  <Copy className="w-4 h-4" />
-                </button>
+              <div className="flex items-center justify-center gap-2 text-blue-200">
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>相手プレイヤーの参加を待っています...</span>
               </div>
-              <p className="text-sm text-gray-300 mt-2">ホストが応答コードを受信すると、ゲームが開始されます。</p>
-            </div>
-            
-            {/* QRコードを表示 */}
-            <div className="flex justify-center mt-4">
-              <div className="bg-white p-4 rounded-lg">
-                <QRCode value={responseCode} size={200} />
-              </div>
-            </div>
-            
-            {/* ゲスト側が手動でゲームを開始するボタンを追加 */}
-            <div className="mt-4 text-center">
-              <button
-                onClick={() => setGamePhase('playing')}
-                className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg transition-colors font-medium"
-              >
-                ゲームを開始する
-              </button>
-              <p className="text-sm text-gray-300 mt-2">応答コードを送信した後、このボタンを押してゲームを開始してください。</p>
             </div>
           </div>
         )}
@@ -503,9 +438,11 @@ const P2PReversi: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 bg-black rounded-full border-2 border-white"></div>
                   <span>黒: {getStoneCount(BLACK)}</span>
+                  {myColor === BLACK && <span className="text-yellow-300">（あなた）</span>}
                 </div>
                 
                 <div className="text-center">
+                  <div className="text-sm text-blue-200 mb-1">ゲームID: {gameId}</div>
                   {gamePhase === 'playing' && (
                     <div>
                       <div className="text-sm opacity-80">現在のターン</div>
@@ -514,7 +451,7 @@ const P2PReversi: React.FC = () => {
                           currentPlayer === BLACK ? 'bg-black border-white' : 'bg-white border-black'
                         }`}></div>
                         <span>{getColorName(currentPlayer)}</span>
-                        {currentPlayer === myColor && <span className="text-yellow-300">（あなた）</span>}
+                        {currentPlayer === myColor && <span className="text-yellow-300">（あなたの番）</span>}
                       </div>
                     </div>
                   )}
@@ -528,6 +465,7 @@ const P2PReversi: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 bg-white rounded-full border-2 border-black"></div>
                   <span>白: {getStoneCount(WHITE)}</span>
+                  {myColor === WHITE && <span className="text-yellow-300">（あなた）</span>}
                 </div>
               </div>
             </div>
@@ -571,84 +509,11 @@ const P2PReversi: React.FC = () => {
                 新しいゲームを開始
               </button>
             </div>
-            
-            {/* 相手の手を受信するエリア */}
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mt-6">
-              <h3 className="text-xl font-bold text-white mb-4 text-center">相手の手を受信</h3>
-              <div className="mb-4">
-                <label className="block text-white mb-2">相手からの同期コードを入力：</label>
-                <input
-                  type="text"
-                  value={opponentSyncCode}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setOpponentSyncCode(e.target.value)}
-                  className="w-full p-3 rounded-lg bg-black/20 text-white placeholder-gray-300 border border-gray-600"
-                  placeholder={`${connectionId}-ゲーム状態データ`}
-                />
-              </div>
-              <button
-                onClick={receiveSyncCode}
-                disabled={!opponentSyncCode}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 text-white px-6 py-3 rounded-lg transition-colors font-medium w-full"
-              >
-                ゲーム状態を同期
-              </button>
-            </div>
           </>
-        )}
-        
-        {/* 同期コード送信ダイアログ */}
-        {showSyncDialog && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-xl p-6 max-w-md w-full">
-              <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">手を相手に送信</h3>
-              <div className="mb-4">
-                <label className="block text-gray-700 mb-2">この同期コードを相手に送信してください：</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={gameSyncCode}
-                    readOnly
-                    className="w-full p-3 rounded-lg bg-gray-100 text-gray-800 border border-gray-300 pr-12"
-                  />
-                  <button
-                    onClick={() => copyToClipboard(gameSyncCode)}
-                    className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-lg"
-                  >
-                    <Copy className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              
-              {/* QRコードを表示 */}
-              <div className="flex justify-center mb-4">
-                <div className="bg-white p-2 rounded-lg border">
-                  <QRCode value={gameSyncCode} size={150} />
-                </div>
-              </div>
-              
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowSyncDialog(false)}
-                  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
-                >
-                  閉じる
-                </button>
-                <button
-                  onClick={() => {
-                    copyToClipboard(gameSyncCode);
-                    setShowSyncDialog(false);
-                  }}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-                >
-                  コピーして閉じる
-                </button>
-              </div>
-            </div>
-          </div>
         )}
       </div>
     </div>
   );
 };
 
-export default P2PReversi;
+export default FirebaseReversi;
