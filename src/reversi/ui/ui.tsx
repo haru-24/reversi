@@ -16,6 +16,7 @@ import {
   UserOutlined,
   WifiOutlined,
   ReloadOutlined,
+  XOutlined,
 } from '@ant-design/icons';
 import { isFirebaseConfigured } from '../../firebase';
 import { useReversiGame } from '../useReversiGame';
@@ -67,6 +68,8 @@ export const ReversiUI: React.FC = () => {
         minHeight: '100vh',
         background:
           'linear-gradient(135deg, #1b5e20 0%, #2e7d32 50%, #1b5e20 100%)',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
       <Content
@@ -75,6 +78,10 @@ export const ReversiUI: React.FC = () => {
           margin: '0 auto',
           padding: '12px',
           width: '100%',
+          flex: '1 1 auto',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '100vh',
         }}
       >
         <div
@@ -553,6 +560,52 @@ export const ReversiUI: React.FC = () => {
             </div>
           </>
         )}
+
+        {/* フッター */}
+        <Space
+          direction="vertical"
+          size="small"
+          style={{
+            marginTop: 'auto',
+            flexShrink: 0,
+            width: '100%',
+          }}
+        >
+          <Divider
+            style={{
+              borderColor: 'rgba(255, 255, 255, 0.1)',
+              margin: '16px 0',
+            }}
+          />
+          <Space
+            direction="horizontal"
+            size="small"
+            style={{
+              justifyContent: 'center',
+              width: '100%',
+              padding: '8px 0',
+            }}
+          >
+            <Text
+              style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: '12px' }}
+            >
+              Made by haru_taro
+            </Text>
+            <Typography.Link
+              href="https://x.com/haru_taro_24"
+              target="_blank"
+              style={{
+                color: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '14px',
+                textDecoration: 'none',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              <XOutlined />
+            </Typography.Link>
+          </Space>
+        </Space>
       </Content>
     </Layout>
   );
