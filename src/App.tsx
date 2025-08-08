@@ -44,6 +44,7 @@ export const ReversiUI: React.FC = () => {
     gameId,
     isConnected,
     opponentConnected,
+    lastMove,
     myColor,
     joinGameId,
     setJoinGameId,
@@ -395,6 +396,22 @@ export const ReversiUI: React.FC = () => {
                           }}
                         />
                       )}
+                      {lastMove &&
+                        lastMove.player !== myColor &&
+                        lastMove.row === rowIndex &&
+                        lastMove.col === colIndex && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              borderRadius: '50%',
+                              border: '3px solid #ffeb3b',
+                              boxShadow:
+                                '0 0 8px rgba(255,235,59,0.9), 0 0 16px rgba(255,235,59,0.6)',
+                              pointerEvents: 'none',
+                            }}
+                          />
+                        )}
                       {gamePhase === 'playing' &&
                         currentPlayer === myColor &&
                         myColor !== null &&

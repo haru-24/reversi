@@ -25,6 +25,7 @@ import {
   generateGameId,
   generatePlayerId,
   getValidMoves,
+  type GameState,
 } from './logic';
 
 export interface UseReversiGameState {
@@ -36,6 +37,7 @@ export interface UseReversiGameState {
   gameId: string;
   isConnected: boolean;
   opponentConnected: boolean;
+  lastMove: GameState['lastMove'] | null;
   // me
   myColor: PlayerColor | null;
   myPlayerId: string;
@@ -71,6 +73,7 @@ export const useReversiGame = (): UseReversiGameState => {
   const [gameStateRef, setGameStateRef] = useState<DatabaseReference | null>(
     null
   );
+  const [lastMove, setLastMove] = useState<GameState['lastMove'] | null>(null);
 
   const getValidMovesMemo = useCallback(
     (boardArg: Board, player: PlayerColor): Position[] =>
@@ -200,6 +203,7 @@ export const useReversiGame = (): UseReversiGameState => {
       setCurrentPlayer(gameState.currentPlayer);
       setGamePhase(gameState.gamePhase);
       setGameResult(gameState.gameResult);
+      setLastMove(gameState.lastMove ?? null);
 
       const isOpponentConnected =
         myColor === BLACK
@@ -239,6 +243,7 @@ export const useReversiGame = (): UseReversiGameState => {
     setGameStateRef(null);
     setIsConnected(false);
     setOpponentConnected(false);
+    setLastMove(null);
   }, [gameStateRef, handleGameStateUpdate]);
 
   const validMoves: Position[] = useMemo(() => {
@@ -265,6 +270,7 @@ export const useReversiGame = (): UseReversiGameState => {
     gameId,
     isConnected,
     opponentConnected,
+    lastMove,
     myColor,
     myPlayerId,
     joinGameId,
