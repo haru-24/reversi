@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Copy, Users, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { database, isFirebaseConfigured } from './firebase';
 import { ref, set, update, onValue, off, get } from 'firebase/database';
+import type { DataSnapshot, DatabaseReference } from 'firebase/database';
 
 const BOARD_SIZE = 8;
 const EMPTY = 0;
@@ -34,8 +35,6 @@ interface GameState {
   };
 }
 
-
-
 // ランダムなゲームIDを生成
 const generateGameId = (): string => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -48,7 +47,9 @@ const generatePlayerId = (): string => {
 
 // 初期盤面を作成
 const createInitialBoard = (): Board => {
-  const board: Board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(EMPTY));
+  const board: Board = Array(BOARD_SIZE)
+    .fill(null)
+    .map(() => Array(BOARD_SIZE).fill(EMPTY));
   board[3][3] = WHITE;
   board[3][4] = BLACK;
   board[4][3] = BLACK;
@@ -63,21 +64,24 @@ const createInitialGameState = (hostPlayerId: string): GameState => ({
   gamePhase: 'waiting',
   gameResult: null,
   players: {
-    black: hostPlayerId
+    black: hostPlayerId,
   },
-  createdAt: Date.now()
+  createdAt: Date.now(),
 });
 
 // 方向ベクトル（8方向）
 const DIRECTIONS: Position[] = [
-  [-1, -1], [-1, 0], [-1, 1],
-  [0, -1],           [0, 1],
-  [1, -1],  [1, 0],  [1, 1]
+  [-1, -1],
+  [-1, 0],
+  [-1, 1],
+  [0, -1],
+  [0, 1],
+  [1, -1],
+  [1, 0],
+  [1, 1],
 ];
 
-
-
-const FirebaseReversi: React.FC = () => {
+export const ReversiUI: React.FC = () => {
   const [board, setBoard] = useState<Board>(createInitialBoard());
   const [currentPlayer, setCurrentPlayer] = useState<PlayerColor>(BLACK);
   const [myColor, setMyColor] = useState<PlayerColor | null>(null);
@@ -88,28 +92,35 @@ const FirebaseReversi: React.FC = () => {
   const [joinGameId, setJoinGameId] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [opponentConnected, setOpponentConnected] = useState<boolean>(false);
-  const [gameStateRef, setGameStateRef] = useState<any>(null);
-
-  // Firebase設定チェック
-  // const isFirebaseConfigured = FIREBASE_CONFIG.apiKey !== "your-api-key-here";
+  const [gameStateRef, setGameStateRef] = useState<DatabaseReference | null>(
+    null
+  );
 
   // 有効な手を取得
-  const getValidMoves = useCallback((board: Board, player: PlayerColor): Position[] => {
-    const validMoves: Position[] = [];
-    for (let row = 0; row < BOARD_SIZE; row++) {
-      for (let col = 0; col < BOARD_SIZE; col++) {
-        if (board[row][col] === EMPTY) {
-          if (canFlip(board, row, col, player).length > 0) {
-            validMoves.push([row, col]);
+  const getValidMoves = useCallback(
+    (board: Board, player: PlayerColor): Position[] => {
+      const validMoves: Position[] = [];
+      for (let row = 0; row < BOARD_SIZE; row++) {
+        for (let col = 0; col < BOARD_SIZE; col++) {
+          if (board[row][col] === EMPTY) {
+            if (canFlip(board, row, col, player).length > 0) {
+              validMoves.push([row, col]);
+            }
           }
         }
       }
-    }
-    return validMoves;
-  }, []);
+      return validMoves;
+    },
+    []
+  );
 
   // ひっくり返せる石の位置を取得
-  const canFlip = (board: Board, row: number, col: number, player: PlayerColor): Position[] => {
+  const canFlip = (
+    board: Board,
+    row: number,
+    col: number,
+    player: PlayerColor
+  ): Position[] => {
     const toFlip: Position[] = [];
     const opponent: PlayerColor = player === BLACK ? WHITE : BLACK;
 
@@ -134,8 +145,13 @@ const FirebaseReversi: React.FC = () => {
   };
 
   // 手を打つ（Firebase経由）
-  const makeMove = async (row: number, col: number, player: PlayerColor): Promise<boolean> => {
-    if (!gameStateRef || gamePhase !== 'playing' || currentPlayer !== myColor) return false;
+  const makeMove = async (
+    row: number,
+    col: number,
+    player: PlayerColor
+  ): Promise<boolean> => {
+    if (!gameStateRef || gamePhase !== 'playing' || currentPlayer !== myColor)
+      return false;
 
     const toFlip = canFlip(board, row, col, player);
     if (toFlip.length === 0) return false;
@@ -149,7 +165,7 @@ const FirebaseReversi: React.FC = () => {
     // 次のプレイヤーを決定
     const nextPlayer: PlayerColor = player === BLACK ? WHITE : BLACK;
     const nextValidMoves = getValidMoves(newBoard, nextPlayer);
-    
+
     let newGamePhase: GamePhase = 'playing';
     let newGameResult: GameResult = null;
 
@@ -157,8 +173,12 @@ const FirebaseReversi: React.FC = () => {
       const currentValidMoves = getValidMoves(newBoard, player);
       if (currentValidMoves.length === 0) {
         // ゲーム終了
-        const blackCount = newBoard.flat().filter(cell => cell === BLACK).length;
-        const whiteCount = newBoard.flat().filter(cell => cell === WHITE).length;
+        const blackCount = newBoard
+          .flat()
+          .filter(cell => cell === BLACK).length;
+        const whiteCount = newBoard
+          .flat()
+          .filter(cell => cell === WHITE).length;
         if (blackCount > whiteCount) newGameResult = 'black';
         else if (whiteCount > blackCount) newGameResult = 'white';
         else newGameResult = 'draw';
@@ -177,8 +197,8 @@ const FirebaseReversi: React.FC = () => {
           row,
           col,
           player,
-          timestamp: Date.now()
-        }
+          timestamp: Date.now(),
+        },
       });
       return true;
     } catch (error) {
@@ -242,7 +262,7 @@ const FirebaseReversi: React.FC = () => {
       // 白プレイヤーとして参加
       await update(gameRef, {
         'players/white': myPlayerId,
-        gamePhase: 'playing'
+        gamePhase: 'playing',
       });
 
       setGameId(joinGameId);
@@ -259,25 +279,35 @@ const FirebaseReversi: React.FC = () => {
   };
 
   // ゲーム状態の更新を処理
-  const handleGameStateUpdate = useCallback((snapshot: any) => {
-    const gameState: GameState | null = snapshot.val();
-    
-    if (!gameState) return;
+  const handleGameStateUpdate = useCallback(
+    (snapshot: DataSnapshot) => {
+      const gameState: GameState | null = snapshot.val();
 
-    setBoard(gameState.board);
-    setCurrentPlayer(gameState.currentPlayer);
-    setGamePhase(gameState.gamePhase);
-    setGameResult(gameState.gameResult);
-    
-    // 相手の接続状態を確認
-    const isOpponentConnected = myColor === BLACK ? 
-      !!gameState.players.white : !!gameState.players.black;
-    setOpponentConnected(isOpponentConnected);
-  }, [myColor]);
+      if (!gameState) return;
+
+      setBoard(gameState.board);
+      setCurrentPlayer(gameState.currentPlayer);
+      setGamePhase(gameState.gamePhase);
+      setGameResult(gameState.gameResult);
+
+      // 相手の接続状態を確認
+      const isOpponentConnected =
+        myColor === BLACK
+          ? !!gameState.players.white
+          : !!gameState.players.black;
+      setOpponentConnected(isOpponentConnected);
+    },
+    [myColor]
+  );
 
   // セルクリック処理
   const handleCellClick = (row: number, col: number): void => {
-    if (gamePhase !== 'playing' || currentPlayer !== myColor || board[row][col] !== EMPTY) return;
+    if (
+      gamePhase !== 'playing' ||
+      currentPlayer !== myColor ||
+      board[row][col] !== EMPTY
+    )
+      return;
     makeMove(row, col, myColor!);
   };
 
@@ -286,7 +316,7 @@ const FirebaseReversi: React.FC = () => {
     if (gameStateRef) {
       off(gameStateRef, 'value', handleGameStateUpdate);
     }
-    
+
     setBoard(createInitialBoard());
     setCurrentPlayer(BLACK);
     setMyColor(null);
@@ -314,8 +344,10 @@ const FirebaseReversi: React.FC = () => {
   };
 
   // 有効な手を表示するかどうか
-  const validMoves: Position[] = gamePhase === 'playing' && currentPlayer === myColor && myColor !== null ? 
-    getValidMoves(board, myColor) : [];
+  const validMoves: Position[] =
+    gamePhase === 'playing' && currentPlayer === myColor && myColor !== null
+      ? getValidMoves(board, myColor)
+      : [];
 
   const isValidMove = (row: number, col: number): boolean => {
     return validMoves.some(([r, c]) => r === row && c === col);
@@ -354,7 +386,11 @@ const FirebaseReversi: React.FC = () => {
             {gamePhase === 'playing' && (
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5" />
-                <span>{opponentConnected ? '対戦相手: オンライン' : '対戦相手: 待機中'}</span>
+                <span>
+                  {opponentConnected
+                    ? '対戦相手: オンライン'
+                    : '対戦相手: 待機中'}
+                </span>
               </div>
             )}
           </div>
@@ -362,17 +398,23 @@ const FirebaseReversi: React.FC = () => {
 
         {!isFirebaseConfigured && (
           <div className="bg-red-600/20 border border-red-500 rounded-xl p-4 mb-6">
-            <h3 className="text-red-200 font-bold mb-2">Firebase設定が必要です</h3>
+            <h3 className="text-red-200 font-bold mb-2">
+              Firebase設定が必要です
+            </h3>
             <p className="text-red-200 text-sm">
               FIREBASE_CONFIGオブジェクトに実際のFirebase設定値を入力してください。
-              <br />Firebase Console → プロジェクト設定 → SDK設定と構成 から取得できます。
+              <br />
+              Firebase Console → プロジェクト設定 → SDK設定と構成
+              から取得できます。
             </p>
           </div>
         )}
 
         {gamePhase === 'setup' && (
           <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
-            <h2 className="text-2xl font-bold text-white mb-4 text-center">ゲーム開始</h2>
+            <h2 className="text-2xl font-bold text-white mb-4 text-center">
+              ゲーム開始
+            </h2>
             <div className="flex flex-col gap-4">
               <button
                 onClick={createGame}
@@ -383,11 +425,15 @@ const FirebaseReversi: React.FC = () => {
               </button>
               <div className="border-t border-white/20 pt-4">
                 <div className="mb-4">
-                  <label className="block text-white mb-2">ゲームIDを入力して参加：</label>
+                  <label className="block text-white mb-2">
+                    ゲームIDを入力して参加：
+                  </label>
                   <input
                     type="text"
                     value={joinGameId}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setJoinGameId(e.target.value.toUpperCase())}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setJoinGameId(e.target.value.toUpperCase())
+                    }
                     className="w-full p-3 rounded-lg bg-black/20 text-white placeholder-gray-300 border border-gray-600"
                     placeholder="例: ABC123"
                     maxLength={6}
@@ -407,13 +453,19 @@ const FirebaseReversi: React.FC = () => {
 
         {gamePhase === 'waiting' && (
           <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
-            <h2 className="text-2xl font-bold text-white mb-4 text-center">プレイヤーを待機中...</h2>
+            <h2 className="text-2xl font-bold text-white mb-4 text-center">
+              プレイヤーを待機中...
+            </h2>
             <div className="text-center">
               <div className="mb-4">
-                <label className="block text-white mb-2">ゲームID（相手に共有してください）：</label>
+                <label className="block text-white mb-2">
+                  ゲームID（相手に共有してください）：
+                </label>
                 <div className="flex items-center justify-center gap-2">
                   <div className="bg-black/20 px-6 py-3 rounded-lg border border-gray-600">
-                    <span className="text-white text-2xl font-mono font-bold">{gameId}</span>
+                    <span className="text-white text-2xl font-mono font-bold">
+                      {gameId}
+                    </span>
                   </div>
                   <button
                     onClick={() => copyToClipboard(gameId)}
@@ -438,20 +490,32 @@ const FirebaseReversi: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 bg-black rounded-full border-2 border-white"></div>
                   <span>黒: {getStoneCount(BLACK)}</span>
-                  {myColor === BLACK && <span className="text-yellow-300">（あなた）</span>}
+                  {myColor === BLACK && (
+                    <span className="text-yellow-300">（あなた）</span>
+                  )}
                 </div>
-                
+
                 <div className="text-center">
-                  <div className="text-sm text-blue-200 mb-1">ゲームID: {gameId}</div>
+                  <div className="text-sm text-blue-200 mb-1">
+                    ゲームID: {gameId}
+                  </div>
                   {gamePhase === 'playing' && (
                     <div>
                       <div className="text-sm opacity-80">現在のターン</div>
                       <div className="flex items-center gap-2 justify-center">
-                        <div className={`w-4 h-4 rounded-full border ${
-                          currentPlayer === BLACK ? 'bg-black border-white' : 'bg-white border-black'
-                        }`}></div>
+                        <div
+                          className={`w-4 h-4 rounded-full border ${
+                            currentPlayer === BLACK
+                              ? 'bg-black border-white'
+                              : 'bg-white border-black'
+                          }`}
+                        ></div>
                         <span>{getColorName(currentPlayer)}</span>
-                        {currentPlayer === myColor && <span className="text-yellow-300">（あなたの番）</span>}
+                        {currentPlayer === myColor && (
+                          <span className="text-yellow-300">
+                            （あなたの番）
+                          </span>
+                        )}
                       </div>
                     </div>
                   )}
@@ -461,11 +525,13 @@ const FirebaseReversi: React.FC = () => {
                     </div>
                   )}
                 </div>
-                
+
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 bg-white rounded-full border-2 border-black"></div>
                   <span>白: {getStoneCount(WHITE)}</span>
-                  {myColor === WHITE && <span className="text-yellow-300">（あなた）</span>}
+                  {myColor === WHITE && (
+                    <span className="text-yellow-300">（あなた）</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -480,8 +546,13 @@ const FirebaseReversi: React.FC = () => {
                       className={`
                         aspect-square bg-green-500 border border-green-700 flex items-center justify-center
                         cursor-pointer hover:bg-green-400 transition-colors relative
-                        ${gamePhase === 'playing' && currentPlayer === myColor && isValidMove(rowIndex, colIndex) 
-                          ? 'ring-2 ring-yellow-400 ring-opacity-60' : ''}
+                        ${
+                          gamePhase === 'playing' &&
+                          currentPlayer === myColor &&
+                          isValidMove(rowIndex, colIndex)
+                            ? 'ring-2 ring-yellow-400 ring-opacity-60'
+                            : ''
+                        }
                       `}
                     >
                       {cell === BLACK && (
@@ -490,11 +561,18 @@ const FirebaseReversi: React.FC = () => {
                       {cell === WHITE && (
                         <div className="w-4/5 h-4/5 bg-white rounded-full border-2 border-gray-300 shadow-lg"></div>
                       )}
-                      {gamePhase === 'playing' && currentPlayer === myColor && myColor !== null && isValidMove(rowIndex, colIndex) && (
-                        <div className={`w-3/5 h-3/5 rounded-full border-2 border-dashed opacity-50 ${
-                          myColor === BLACK ? 'border-black' : 'border-white'
-                        }`}></div>
-                      )}
+                      {gamePhase === 'playing' &&
+                        currentPlayer === myColor &&
+                        myColor !== null &&
+                        isValidMove(rowIndex, colIndex) && (
+                          <div
+                            className={`w-3/5 h-3/5 rounded-full border-2 border-dashed opacity-50 ${
+                              myColor === BLACK
+                                ? 'border-black'
+                                : 'border-white'
+                            }`}
+                          ></div>
+                        )}
                     </div>
                   ))
                 )}
@@ -516,4 +594,4 @@ const FirebaseReversi: React.FC = () => {
   );
 };
 
-export default FirebaseReversi;
+export default ReversiUI;
