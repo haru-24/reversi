@@ -1,8 +1,32 @@
 import React, { useState, useCallback } from 'react';
-import { Copy, Users, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import {
+  Button,
+  Card,
+  Input,
+  Typography,
+  Space,
+  Row,
+  Col,
+  Divider,
+  Alert,
+  Spin,
+  Badge,
+  message,
+  Layout,
+  Avatar,
+} from 'antd';
+import {
+  CopyOutlined,
+  UserOutlined,
+  WifiOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons';
 import { database, isFirebaseConfigured } from './firebase';
 import { ref, set, update, onValue, off, get } from 'firebase/database';
 import type { DataSnapshot, DatabaseReference } from 'firebase/database';
+
+const { Title, Text } = Typography;
+const { Content } = Layout;
 
 const BOARD_SIZE = 8;
 const EMPTY = 0;
@@ -210,7 +234,7 @@ export const ReversiUI: React.FC = () => {
   // ゲームを作成
   const createGame = async (): Promise<void> => {
     if (!isFirebaseConfigured) {
-      alert('Firebase設定が必要です。設定を確認してください。');
+      message.error('Firebase設定が必要です。設定を確認してください。');
       return;
     }
 
@@ -230,14 +254,14 @@ export const ReversiUI: React.FC = () => {
       onValue(gameRef, handleGameStateUpdate);
     } catch (error) {
       console.error('Failed to create game:', error);
-      alert('ゲーム作成に失敗しました。');
+      message.error('ゲーム作成に失敗しました。');
     }
   };
 
   // ゲームに参加
   const joinGame = async (): Promise<void> => {
     if (!isFirebaseConfigured) {
-      alert('Firebase設定が必要です。設定を確認してください。');
+      message.error('Firebase設定が必要です。設定を確認してください。');
       return;
     }
 
@@ -250,12 +274,12 @@ export const ReversiUI: React.FC = () => {
       const gameState = snapshot.val();
 
       if (!snapshot.exists()) {
-        alert('ゲームが見つかりません。ゲームIDを確認してください。');
+        message.error('ゲームが見つかりません。ゲームIDを確認してください。');
         return;
       }
 
       if (gameState.players.white) {
-        alert('このゲームは既に満員です。');
+        message.error('このゲームは既に満員です。');
         return;
       }
 
@@ -274,7 +298,7 @@ export const ReversiUI: React.FC = () => {
       onValue(gameRef, handleGameStateUpdate);
     } catch (error) {
       console.error('Failed to join game:', error);
-      alert('ゲーム参加に失敗しました。');
+      message.error('ゲーム参加に失敗しました。');
     }
   };
 
@@ -338,8 +362,10 @@ export const ReversiUI: React.FC = () => {
   const copyToClipboard = async (text: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(text);
+      message.success('ゲームIDをコピーしました');
     } catch (error) {
       console.error('Failed to copy text:', error);
+      message.error('コピーに失敗しました');
     }
   };
 
@@ -365,233 +391,259 @@ export const ReversiUI: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-900 p-4">
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-6">
-          <h1 className="text-4xl font-bold text-white mb-2">リバーシ</h1>
-          <div className="flex items-center justify-center gap-4 text-blue-200">
-            <div className="flex items-center gap-2">
-              {isConnected ? (
-                <>
-                  <Wifi className="w-5 h-5" />
-                  <span>Firebase接続済み</span>
-                </>
-              ) : (
-                <>
-                  <WifiOff className="w-5 h-5" />
-                  <span>未接続</span>
-                </>
+    <Layout style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #1b5e20 0%, #2e7d32 50%, #1b5e20 100%)' }}>
+      <Content style={{ maxWidth: '1200px', margin: '0 auto', padding: '16px' }}>
+          <Space direction="vertical" style={{ textAlign: 'center', marginBottom: '24px', width: '100%' }}>
+            <Title level={1} style={{ color: 'white', marginBottom: '8px' }}>
+              リバーシ
+            </Title>
+            <Space size="large">
+              <Space>
+                {isConnected ? (
+                  <>
+                    <WifiOutlined style={{ color: '#52c41a' }} />
+                    <Text style={{ color: '#e6f7ff' }}>接続済み</Text>
+                  </>
+                ) : (
+                  <>
+                    <WifiOutlined style={{ color: '#ff4d4f', transform: 'rotate(45deg)' }} />
+                    <Text style={{ color: '#e6f7ff' }}>未接続</Text>
+                  </>
+                )}
+              </Space>
+              {gamePhase === 'playing' && (
+                <Space>
+                  <UserOutlined style={{ color: '#1890ff' }} />
+                  <Text style={{ color: '#e6f7ff' }}>
+                    {opponentConnected ? '対戦相手: オンライン' : '対戦相手: 待機中'}
+                  </Text>
+                </Space>
               )}
-            </div>
-            {gamePhase === 'playing' && (
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5" />
-                <span>
-                  {opponentConnected
-                    ? '対戦相手: オンライン'
-                    : '対戦相手: 待機中'}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
+            </Space>
+          </Space>
 
-        {!isFirebaseConfigured && (
-          <div className="bg-red-600/20 border border-red-500 rounded-xl p-4 mb-6">
-            <h3 className="text-red-200 font-bold mb-2">
-              Firebase設定が必要です
-            </h3>
-            <p className="text-red-200 text-sm">
-              FIREBASE_CONFIGオブジェクトに実際のFirebase設定値を入力してください。
-              <br />
-              Firebase Console → プロジェクト設定 → SDK設定と構成
-              から取得できます。
-            </p>
-          </div>
-        )}
+          {!isFirebaseConfigured && (
+            <Alert
+              message="Firebase設定が必要です"
+              description="FIREBASE_CONFIGオブジェクトに実際のFirebase設定値を入力してください。Firebase Console → プロジェクト設定 → SDK設定と構成 から取得できます。"
+              type="error"
+              showIcon
+              style={{ marginBottom: '24px' }}
+            />
+          )}
 
-        {gamePhase === 'setup' && (
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
-            <h2 className="text-2xl font-bold text-white mb-4 text-center">
-              ゲーム開始
-            </h2>
-            <div className="flex flex-col gap-4">
-              <button
-                onClick={createGame}
-                disabled={!isFirebaseConfigured}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 text-white px-6 py-3 rounded-lg transition-colors font-medium"
-              >
-                新しいゲームを作成（黒石・先手）
-              </button>
-              <div className="border-t border-white/20 pt-4">
-                <div className="mb-4">
-                  <label className="block text-white mb-2">
-                    ゲームIDを入力して参加：
-                  </label>
-                  <input
-                    type="text"
+          {gamePhase === 'setup' && (
+            <Card style={{ marginBottom: '24px', background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(10px)' }}>
+              <Title level={2} style={{ textAlign: 'center', color: 'white', marginBottom: '16px' }}>
+                ゲーム開始
+              </Title>
+              <Space direction="vertical" size="large" style={{ width: '100%' }}>
+                <Button
+                  type="primary"
+                  size="large"
+                  onClick={createGame}
+                  disabled={!isFirebaseConfigured}
+                  style={{ width: '100%' }}
+                >
+                  新しいゲームを作成（黒石・先手）
+                </Button>
+                <Divider style={{ borderColor: 'rgba(255, 255, 255, 0.2)' }} />
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Text style={{ color: 'white' }}>ゲームIDを入力して参加：</Text>
+                  <Input
                     value={joinGameId}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      setJoinGameId(e.target.value.toUpperCase())
-                    }
-                    className="w-full p-3 rounded-lg bg-black/20 text-white placeholder-gray-300 border border-gray-600"
+                    onChange={(e) => setJoinGameId(e.target.value.toUpperCase())}
                     placeholder="例: ABC123"
                     maxLength={6}
+                    size="large"
                   />
-                </div>
-                <button
-                  onClick={joinGame}
-                  disabled={!joinGameId || !isFirebaseConfigured}
-                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-500 text-white px-6 py-3 rounded-lg transition-colors font-medium"
-                >
-                  ゲームに参加する（白石・後手）
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {gamePhase === 'waiting' && (
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
-            <h2 className="text-2xl font-bold text-white mb-4 text-center">
-              プレイヤーを待機中...
-            </h2>
-            <div className="text-center">
-              <div className="mb-4">
-                <label className="block text-white mb-2">
-                  ゲームID（相手に共有してください）：
-                </label>
-                <div className="flex items-center justify-center gap-2">
-                  <div className="bg-black/20 px-6 py-3 rounded-lg border border-gray-600">
-                    <span className="text-white text-2xl font-mono font-bold">
-                      {gameId}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => copyToClipboard(gameId)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-lg"
+                  <Button
+                    type="primary"
+                    size="large"
+                    onClick={joinGame}
+                    disabled={!joinGameId || !isFirebaseConfigured}
+                    style={{ width: '100%' }}
                   >
-                    <Copy className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center justify-center gap-2 text-blue-200">
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>相手プレイヤーの参加を待っています...</span>
-              </div>
-            </div>
-          </div>
-        )}
+                    ゲームに参加する（白石・後手）
+                  </Button>
+                </Space>
+              </Space>
+            </Card>
+          )}
 
-        {(gamePhase === 'playing' || gamePhase === 'finished') && (
-          <>
-            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 mb-6">
-              <div className="flex justify-between items-center text-white">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 bg-black rounded-full border-2 border-white"></div>
-                  <span>黒: {getStoneCount(BLACK)}</span>
-                  {myColor === BLACK && (
-                    <span className="text-yellow-300">（あなた）</span>
-                  )}
-                </div>
+          {gamePhase === 'waiting' && (
+            <Card style={{ marginBottom: '24px', background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(10px)' }}>
+              <Title level={2} style={{ textAlign: 'center', color: 'white', marginBottom: '16px' }}>
+                プレイヤーを待機中...
+              </Title>
+              <Space direction="vertical" size="large" style={{ textAlign: 'center', width: '100%' }}>
+                <Space direction="vertical" size="small">
+                  <Text style={{ color: 'white', display: 'block', marginBottom: '8px' }}>
+                    ゲームID（相手に共有してください）：
+                  </Text>
+                  <Space>
+                    <Input
+                      value={gameId}
+                      readOnly
+                      size="large"
+                      style={{ fontSize: '24px', fontWeight: 'bold', textAlign: 'center' }}
+                    />
+                    <Button
+                      type="primary"
+                      icon={<CopyOutlined />}
+                      onClick={() => copyToClipboard(gameId)}
+                    />
+                  </Space>
+                </Space>
+                <Space>
+                  <Spin indicator={<ReloadOutlined style={{ fontSize: 16, color: '#1890ff' }} spin />} />
+                  <Text style={{ color: '#e6f7ff' }}>相手プレイヤーの参加を待っています...</Text>
+                </Space>
+              </Space>
+            </Card>
+          )}
 
-                <div className="text-center">
-                  <div className="text-sm text-blue-200 mb-1">
-                    ゲームID: {gameId}
-                  </div>
-                  {gamePhase === 'playing' && (
-                    <div>
-                      <div className="text-sm opacity-80">現在のターン</div>
-                      <div className="flex items-center gap-2 justify-center">
-                        <div
-                          className={`w-4 h-4 rounded-full border ${
-                            currentPlayer === BLACK
-                              ? 'bg-black border-white'
-                              : 'bg-white border-black'
-                          }`}
-                        ></div>
-                        <span>{getColorName(currentPlayer)}</span>
-                        {currentPlayer === myColor && (
-                          <span className="text-yellow-300">
-                            （あなたの番）
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {gamePhase === 'finished' && (
-                    <div className="text-xl font-bold">
-                      {getResultMessage(gameResult)}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 bg-white rounded-full border-2 border-black"></div>
-                  <span>白: {getStoneCount(WHITE)}</span>
-                  {myColor === WHITE && (
-                    <span className="text-yellow-300">（あなた）</span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-green-600 p-4 rounded-xl mb-6 shadow-2xl">
-              <div className="grid grid-cols-8 gap-1">
-                {board.map((row, rowIndex) =>
-                  row.map((cell, colIndex) => (
-                    <div
-                      key={`${rowIndex}-${colIndex}`}
-                      onClick={() => handleCellClick(rowIndex, colIndex)}
-                      className={`
-                        aspect-square bg-green-500 border border-green-700 flex items-center justify-center
-                        cursor-pointer hover:bg-green-400 transition-colors relative
-                        ${
-                          gamePhase === 'playing' &&
-                          currentPlayer === myColor &&
-                          isValidMove(rowIndex, colIndex)
-                            ? 'ring-2 ring-yellow-400 ring-opacity-60'
-                            : ''
-                        }
-                      `}
-                    >
-                      {cell === BLACK && (
-                        <div className="w-4/5 h-4/5 bg-black rounded-full border-2 border-gray-600 shadow-lg"></div>
+          {(gamePhase === 'playing' || gamePhase === 'finished') && (
+            <>
+              <Card style={{ marginBottom: '24px', background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(10px)' }}>
+                <Row justify="space-between" align="middle">
+                  <Col>
+                    <Space>
+                      <Badge count={getStoneCount(BLACK)} color="black" />
+                      <Text style={{ color: 'white' }}>黒</Text>
+                      {myColor === BLACK && (
+                        <Text style={{ color: '#faad14' }}>（あなた）</Text>
                       )}
-                      {cell === WHITE && (
-                        <div className="w-4/5 h-4/5 bg-white rounded-full border-2 border-gray-300 shadow-lg"></div>
+                    </Space>
+                  </Col>
+                  <Col>
+                    <Space direction="vertical" size="small" style={{ textAlign: 'center' }}>
+                      <Text style={{ color: '#e6f7ff', fontSize: '12px', display: 'block', marginBottom: '4px' }}>
+                        ゲームID: {gameId}
+                      </Text>
+                      {gamePhase === 'playing' && (
+                        <Space direction="vertical" size="small">
+                          <Text style={{ color: 'rgba(255, 255, 255, 0.8)', fontSize: '12px', display: 'block' }}>
+                            現在のターン
+                          </Text>
+                          <Space>
+                            <Avatar
+                              size="small"
+                              style={{
+                                backgroundColor: currentPlayer === BLACK ? 'black' : 'white',
+                                border: `2px solid ${currentPlayer === BLACK ? 'white' : 'black'}`,
+                              }}
+                            />
+                            <Text style={{ color: 'white' }}>{getColorName(currentPlayer)}</Text>
+                            {currentPlayer === myColor && (
+                              <Text style={{ color: '#faad14' }}>（あなたの番）</Text>
+                            )}
+                          </Space>
+                        </Space>
                       )}
-                      {gamePhase === 'playing' &&
-                        currentPlayer === myColor &&
-                        myColor !== null &&
-                        isValidMove(rowIndex, colIndex) && (
+                      {gamePhase === 'finished' && (
+                        <Title level={3} style={{ color: 'white', margin: 0 }}>
+                          {getResultMessage(gameResult)}
+                        </Title>
+                      )}
+                    </Space>
+                  </Col>
+                  <Col>
+                    <Space>
+                      <Badge count={getStoneCount(WHITE)} color="white" />
+                      <Text style={{ color: 'white' }}>白</Text>
+                      {myColor === WHITE && (
+                        <Text style={{ color: '#faad14' }}>（あなた）</Text>
+                      )}
+                    </Space>
+                  </Col>
+                </Row>
+              </Card>
+
+              <Card style={{ marginBottom: '24px', background: '#4caf50', border: 'none' }}>
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(8, 1fr)', 
+                  gap: '4px',
+                  aspectRatio: '1'
+                }}>
+                  {board.map((row, rowIndex) =>
+                    row.map((cell, colIndex) => (
+                      <div
+                        key={`${rowIndex}-${colIndex}`}
+                        onClick={() => handleCellClick(rowIndex, colIndex)}
+                        style={{
+                          aspectRatio: '1',
+                          backgroundColor: '#66bb6a',
+                          border: '1px solid #388e3c',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: gamePhase === 'playing' && currentPlayer === myColor && board[rowIndex][colIndex] === EMPTY ? 'pointer' : 'default',
+                          position: 'relative',
+                          padding: 0,
+                          margin: 0,
+                          ...(gamePhase === 'playing' && currentPlayer === myColor && isValidMove(rowIndex, colIndex) && {
+                            boxShadow: '0 0 0 2px #fdd835',
+                          }),
+                        }}
+                      >
+                        {cell === BLACK && (
                           <div
-                            className={`w-3/5 h-3/5 rounded-full border-2 border-dashed opacity-50 ${
-                              myColor === BLACK
-                                ? 'border-black'
-                                : 'border-white'
-                            }`}
-                          ></div>
+                            style={{
+                              width: 'calc(100% - 8px)',
+                              height: 'calc(100% - 8px)',
+                              backgroundColor: 'black',
+                              borderRadius: '50%',
+                              border: '2px solid #424242',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                              flexShrink: 0,
+                            }}
+                          />
                         )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+                        {cell === WHITE && (
+                          <div
+                            style={{
+                              width: 'calc(100% - 8px)',
+                              height: 'calc(100% - 8px)',
+                              backgroundColor: 'white',
+                              borderRadius: '50%',
+                              border: '2px solid #e0e0e0',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                              flexShrink: 0,
+                            }}
+                          />
+                        )}
+                        {gamePhase === 'playing' &&
+                          currentPlayer === myColor &&
+                          myColor !== null &&
+                          isValidMove(rowIndex, colIndex) && (
+                            <div
+                              style={{
+                                width: '60%',
+                                height: '60%',
+                                borderRadius: '50%',
+                                border: `2px dashed ${myColor === BLACK ? 'black' : 'white'}`,
+                                opacity: 0.5,
+                                position: 'absolute',
+                              }}
+                            />
+                          )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Card>
 
-            <div className="text-center">
-              <button
-                onClick={resetGame}
-                className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg transition-colors font-medium"
-              >
-                新しいゲームを開始
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+              <Space style={{ textAlign: 'center', width: '100%', justifyContent: 'center' }}>
+                <Button type="primary" danger size="large" onClick={resetGame}>
+                  新しいゲームを開始
+                </Button>
+              </Space>
+            </>
+          )}
+        </Content>
+    </Layout>
   );
 };
 
-export default ReversiUI;
