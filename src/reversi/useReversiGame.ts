@@ -74,6 +74,7 @@ export const useReversiGame = (): UseReversiGameState => {
     null
   );
   const [lastMove, setLastMove] = useState<GameState['lastMove'] | null>(null);
+  const [isDebugMode, setIsDebugMode] = useState<boolean>(false);
 
   const getValidMovesMemo = useCallback(
     (boardArg: Board, player: PlayerColor): Position[] =>
@@ -83,7 +84,11 @@ export const useReversiGame = (): UseReversiGameState => {
 
   const makeMove = useCallback(
     async (row: number, col: number, player: PlayerColor): Promise<boolean> => {
-      if (!gameStateRef || gamePhase !== 'playing' || currentPlayer !== myColor)
+      if (
+        (!gameStateRef && !isDebugMode) ||
+        gamePhase !== 'playing' ||
+        currentPlayer !== myColor
+      )
         return false;
 
       const toFlip = canFlip(board, row, col, player);
@@ -117,18 +122,31 @@ export const useReversiGame = (): UseReversiGameState => {
         }
       }
 
+      const newLastMove = {
+        row,
+        col,
+        player,
+        timestamp: Date.now(),
+      };
+
+      if (isDebugMode) {
+        // ローカル状態更新
+        setBoard(newBoard);
+        setCurrentPlayer(nextValidMoves.length > 0 ? nextPlayer : player);
+        setGamePhase(newGamePhase);
+        setGameResult(newGameResult);
+        setLastMove(newLastMove);
+        return true;
+      }
+
       try {
+        if (!gameStateRef) return false;
         await update(gameStateRef, {
           board: newBoard,
           currentPlayer: nextValidMoves.length > 0 ? nextPlayer : player,
           gamePhase: newGamePhase,
           gameResult: newGameResult,
-          lastMove: {
-            row,
-            col,
-            player,
-            timestamp: Date.now(),
-          },
+          lastMove: newLastMove,
         });
         return true;
       } catch (error) {
@@ -136,7 +154,15 @@ export const useReversiGame = (): UseReversiGameState => {
         return false;
       }
     },
-    [board, currentPlayer, gamePhase, gameStateRef, getValidMovesMemo, myColor]
+    [
+      board,
+      currentPlayer,
+      gamePhase,
+      gameStateRef,
+      getValidMovesMemo,
+      myColor,
+      isDebugMode,
+    ]
   );
 
   const createGame = useCallback(async (): Promise<void> => {
@@ -161,8 +187,20 @@ export const useReversiGame = (): UseReversiGameState => {
   }, [myPlayerId]);
 
   const joinGame = useCallback(async (): Promise<void> => {
-    if (!isFirebaseConfigured) return;
     if (!joinGameId) return;
+
+    // デバッグモード
+    if (joinGameId === '999999') {
+      setGameId('999999');
+      setMyColor(BLACK);
+      setGamePhase('playing');
+      setIsConnected(true);
+      setOpponentConnected(true);
+      setIsDebugMode(true);
+      return;
+    }
+
+    if (!isFirebaseConfigured) return;
 
     const gameRef = ref(database, `games/${joinGameId}`);
 
@@ -244,6 +282,7 @@ export const useReversiGame = (): UseReversiGameState => {
     setIsConnected(false);
     setOpponentConnected(false);
     setLastMove(null);
+    setIsDebugMode(false);
   }, [gameStateRef, handleGameStateUpdate]);
 
   const validMoves: Position[] = useMemo(() => {
